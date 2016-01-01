@@ -1,0 +1,766 @@
+---
+title: "Semantic coherence graphs"
+output: html_document
+---
+
+# todo
+
+- move score computation into prelude
+- change coherence back to condition, as this is what i use in the paper
+
+# Prelude
+
+## Libraries
+```{r}
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(plyr)
+library(dplyr)
+library(memoise)
+library(tidyr)
+library(pander)
+```
+
+## Utilities
+```{r}
+save.work <- function() { save.image("workspace.RData") }
+
+get.binomial.ci <- function(d) {
+  tbl <- table(d)[c("1","0")]
+  structure(binom.test(tbl)$conf.int, names = c("ci.l","ci.u"))
+}
+
+relevel.factor <- function(F, L, ordered = FALSE) {
+  L0 <- levels(F) # old levels
+  factor(F, levels = L0[match(L, L0)], ordered = ordered)
+}
+
+to.data.frame <- function(x) {
+  do.call(data.frame, as.list(x))
+}
+
+pluck <- function(lst, prop) {
+  Map(function(x) { x[prop] }, lst)
+}
+
+generic.ci_ <- function(x, n = 5000){
+  structure(
+    quantile(
+      replicate(n, mean(sample(x, replace = TRUE),
+                        na.rm = TRUE)),
+      c(0.025, 0.975)),
+    names=c("ci.l","ci.u"))
+}
+
+generic.ci <- memoise(generic.ci_)
+
+ci.l <- function(x) {
+  generic.ci(x)["ci.l"]
+}
+
+ci.u <- function(x) {
+  generic.ci(x)["ci.u"]
+}
+
+round0 <<- function(x) {
+  round(x, digits = 0)
+}
+
+round1 <<- function(x) {
+  round(x, digits = 1)
+}
+
+round2 <<- function(x) {
+  round(x, digits = 2)
+}
+
+round3 <<- function(x) {
+  round(x, digits = 3)
+}
+
+round4 <<- function(x) {
+  round(x, digits = 4)
+}
+
+round5 <<- function(x) {
+  round(x, digits = 5)
+}
+
+get_stars <- function(p) {
+  if (p < 0.001) return("***")
+  if (p < 0.01) return("**")
+  if (p < 0.05) return("*")
+  if (p < 0.1) return(".")
+  return("")
+}
+
+
+
+cohen.d <<- function(x,y) {
+  sX <- sd(x)
+  nX <- length(x)
+  sY <- sd(y)
+  nY <- length(y)
+  sPool <- sqrt( ((nX - 1) * sX^2 + (nY - 1) * sY^2 )/(nX+nY))
+  (mean(x) - mean(y))/sPool
+}
+
+scoop <- function(df, seed = 0, n = 5) {
+  set.seed(seed)
+  df[sample(nrow(df), n), ]
+}
+
+ForEach <- function(f, xs) {
+  for(x in xs) {
+    f(x)
+  }
+}
+```
+
+## Graphics theme
+```{r}
+theme_pub <<- function(base_size = 24) {
+    theme_bw() %+replace% theme(
+        axis.line =         element_blank(),
+        axis.text.x =       element_text(size = base_size * 0.7, lineheight = 1.0, vjust = 1),
+        axis.text.y =       element_text(size = base_size * 0.7, lineheight = 1.0, hjust = 1),
+        axis.title.x =      element_text(size = base_size * 1, vjust = 0, lineheight = base_size * 1.2),
+        axis.title.y =      element_text(size = base_size * 1, vjust = 0.3, angle = 90 ),
+        legend.key.size =   unit(1.2, "lines"),
+        legend.text =       element_text(size = base_size * 0.7),
+        legend.title =      element_text(size = base_size * 0.7, face = "bold", hjust = 0),
+        panel.grid.major =  element_blank(),
+        panel.grid.minor =  element_blank(),
+        strip.text.x =      element_text(size = base_size * 0.8, colour = "#000000"),
+        strip.text.y =      element_text(size = base_size * 0.6, colour = "#000000")
+    )
+}
+
+theme_set(theme_pub(16))
+```
+
+## Read data
+
+drop subjects who didn't pass all catch trials
+
+```{r}
+subjects <- read.csv("subjects.csv") %>% filter(passed.catch.trials)
+
+memory <- read.csv("memory.csv") %>%
+  rename(anon.id = subj) %>%
+  merge(subjects[,c("anon.id","passed.catch.trials")]) %>%
+  select(-passed.catch.trials)
+
+similarity <- read.csv("similarity.csv") %>%
+  rename(anon.id = subj) %>%
+  merge(subjects[,c("anon.id","passed.catch.trials")]) %>%
+  select(-passed.catch.trials)
+
+meaning <- read.csv("meaning.csv") %>%
+  rename(anon.id = subj) %>%
+  merge(subjects[,c("anon.id","passed.catch.trials")]) %>%
+  select(-passed.catch.trials)
+```
+
+# Figure 3
+
+```{r}
+(function() {
+
+  coherence.levels = c('0/3','1/3','2/3', 'nonce.connective', '3/3')
+  
+  subjects <- filter(subjects, experiment %in% c("1a", "1b"))
+  
+  memory.responses <- memory %>%
+    filter(type != "catch") %>%
+    merge(subjects) %>%
+    droplevels %>%
+    group_by(anon.id, coherence, exposures, type) %>%
+    summarise(response = mean(response))
+
+  stats <- memory.responses %>%
+    group_by(exposures, coherence, type) %>%
+    summarise(mean.response = mean(response),
+              ci.l = ci.l(response),
+              ci.u = ci.u(response))
+  
+  coherence.labeller <- function(variable,value){
+    dict <- list(
+    '0/3' = '0/3 coherence',
+    '1/3' = '1/3 coherence',
+    '2/3' = '2/3 coherence',
+    '3/3' = '3/3 coherence',
+    'nonce.connective' = '3/3 coherence\n(nonce connective)')
+    return(dict[value])
+  }
+  
+  qplot(data = stats,
+            x = exposures,
+            y = mean.response,
+            label = type,
+            geom = c('point'),
+            group = type,
+            color = type) +
+    facet_grid(. ~ coherence, labeller = coherence.labeller) +
+      geom_line(size = 0.3) +
+      scale_color_manual(name = "Sentence type",
+                         breaks = c("familiar", "withheld", "cross", "position"),
+                         labels = c("Familiar", "Withheld", "Cross", "Position"),
+                         values = c(familiar = 'black',
+                                    withheld = 'steelblue2',
+                                    cross = 'khaki3',
+                                    position = 'firebrick1')) +
+      geom_errorbar(aes(ymin=ci.l, ymax=ci.u), size = 0.1, width = 0.1) +
+      ylab("Familiarity") +
+      scale_x_continuous(name = "Exposures", limits = c(56 - 10, 392 + 10), breaks = c(56, 126, 196, 392)) +
+      theme(legend.key.size = unit(0.9, 'cm'))
+
+})()
+```
+
+# Figure 4
+
+```{r}
+(function() {
+  
+  subjects <- filter(subjects, experiment %in% c("1a","1b"))
+  
+  raw.mem <- droplevels(merge(memory, subjects))
+  raw.sim <- droplevels(merge(similarity, subjects))
+  raw.mng <- droplevels(merge(meaning, subjects))
+  
+  # put the conditions in the order i want them displayed in the legend (top to bottom)
+  coherence.order <- c("nonce.connective", "3/3", "2/3", "1/3", "0/3")
+  
+  raw.mem$coherence <- relevel.factor(raw.mem$coherence, coherence.order)
+  raw.sim$coherence <- relevel.factor(raw.sim$coherence, coherence.order)
+  raw.mng$coherence <- relevel.factor(raw.mng$coherence, coherence.order)
+
+  # compute memory score for each subject
+  subj.mem <- raw.mem %>%
+    filter(type %in% c("withheld","cross")) %>%
+    group_by(anon.id, coherence, exposures, type) %>%
+    summarise(mean.response = mean(response)) %>%
+    spread(type, mean.response) %>%
+    transform(score = (withheld - cross)/4) %>%
+    select(-withheld,-cross)
+  
+  # compute similarity score for each subject
+  subj.sim <- raw.sim %>%
+    filter(type %in% c("within","cross")) %>%
+    group_by(anon.id, coherence, exposures, type) %>%
+    summarise(mean.response = mean(response)) %>%
+    spread(type, mean.response) %>%
+    transform(score = (within - cross)/4) %>%
+    select(-within,-cross)
+  
+  # compute meaning score for each subject
+  subj.mng <- raw.mng %>%
+    group_by(anon.id, coherence, exposures) %>%
+    summarise(score = (sum(match) - 3)/3)
+  
+  subj.scores <- rbind(cbind(subj.mem, measure = "Memory"),
+                       cbind(subj.sim, measure = "Similarity"),
+                       cbind(subj.mng, measure = "Referent assignment"))
+  
+  levels(subj.scores$coherence) <- c("NC 3/3", "3/3", "2/3", "1/3", "0/3")
+  
+  # compute a score for each measure and condition (= coherence x exposure)
+  cond.scores <- subj.scores %>%
+    group_by(measure, coherence, exposures) %>%
+    summarise(mean.score = mean(score, na.rm = TRUE),
+              ci.l = ci.l(score),
+              ci.u = ci.u(score))
+  
+  # deterministic jitter for different coherence levels
+  cond.scores$x.offset <- with(cond.scores, c(20, 10, 0, -10, -20)[ as.numeric(coherence) ])
+  
+  colors <- c('steelblue2','black','khaki3','firebrick1', 'gray')
+  
+  ggplot(data = cond.scores) +
+      facet_grid(. ~ measure) +
+      coord_cartesian(ylim = c(-0.3, 0.8)) + # HT http://stackoverflow.com/a/16686534/351392
+      geom_errorbar(aes(x = exposures + x.offset, ymin = ci.l, ymax = ci.u, color=coherence), width = 0, size = 0.2) +
+      stat_smooth(data = subj.scores, method="lm",se=FALSE, mapping = aes(x = exposures, y= score, color = coherence),size=0.5,linetype=2) +
+      geom_point(aes(x = exposures + x.offset, y = mean.score, color = coherence, fill = coherence, shape = coherence), size = 2.5) +
+      ylab("Score\n") +
+      scale_shape_manual(name = 'Coherence', values = c(8, 16, 15, 17, 23)) +
+      scale_color_manual(name = 'Coherence', values = colors) +
+      scale_fill_manual(name = 'Coherence', values = colors) + 
+      scale_x_continuous(name = "Exposures", limits = c(56 - 30, 392 + 30), breaks = c(56, 126, 196, 392)) +
+      theme(legend.title = element_text(size = 8),
+            legend.text = element_text(size = 8))
+  
+})()
+```
+
+# Figure 5
+
+```{r}
+(function() {
+  
+  subjects <- filter(subjects,
+                     (experiment == "1a" & coherence == "3/3") |
+                       (experiment %in% c("2","3")))
+  
+  memory.responses <- memory %>%
+    filter(type != "catch") %>%
+    merge(subjects) %>%
+    droplevels %>%
+    group_by(anon.id, coherence, exposures, type) %>%
+    summarise(response = mean(response))
+  
+  stats <- memory.responses %>%
+    group_by(exposures, coherence, type) %>%
+    summarise(mean.response = mean(response),
+              ci.l = ci.l(response),
+              ci.u = ci.u(response))
+  
+  coherence.labeller <- function(variable,value){
+    dict <- list(
+    '3/3' = '3/3 coherence\n(Expt 1)',
+    'onset' = 'Onset\n(Expt 2)',
+    'rime' = 'Rime\n(Expt 2)',
+    'syllables' = 'Syllable count\n(Expt 2)',
+    'semantic.baseline' = 'Semantic baseline\n(Expt 3)')
+    
+    return(dict[value])
+  }
+  
+  qplot(data = stats,
+            x = exposures,
+            y = mean.response,
+            label = type,
+            geom = c('point'),
+            group = type,
+            color = type) +
+    facet_grid(. ~ coherence, labeller = coherence.labeller) +
+      geom_line(size = 0.3) +
+      scale_color_manual(name = "Sentence type",
+                         breaks = c("familiar", "withheld", "cross", "position"),
+                         labels = c("Familiar", "Withheld", "Cross", "Position"),
+                         values = c(familiar = 'black',
+                                    withheld = 'steelblue2',
+                                    cross = 'khaki3',
+                                    position = 'firebrick1')) +
+      geom_errorbar(aes(ymin=ci.l, ymax=ci.u), size = 0.1, width = 0.1) +
+      ylab("Familiarity") +
+      scale_x_continuous(name = "Exposures", limits = c(56 - 10, 392 + 10), breaks = c(56, 126, 196, 392)) +
+      theme(legend.key.size = unit(0.9, 'cm'))
+
+})()
+```
+
+# Figure 6
+
+```{r}
+(function() {
+  
+  coherence.order <- c("3/3","onset","rime","syllables", "semantic.baseline")
+  
+  subjects <- filter(subjects, experiment %in% c("1a","2","3"), coherence %in% coherence.order)
+  
+  raw.mem <- droplevels(merge(memory, subjects))
+  raw.sim <- droplevels(merge(similarity, subjects))
+  raw.mng <- droplevels(merge(meaning, subjects))
+  
+  # put the conditions in the order i want them displayed in the legend (top to bottom)
+  
+  raw.mem$coherence <- relevel.factor(raw.mem$coherence, coherence.order)
+  raw.sim$coherence <- relevel.factor(raw.sim$coherence, coherence.order)
+  raw.mng$coherence <- relevel.factor(raw.mng$coherence, coherence.order)
+  
+  # compute memory score for each subject
+  subj.mem <- raw.mem %>%
+    filter(type %in% c("withheld","cross")) %>%
+    group_by(anon.id, coherence, exposures, type) %>%
+    summarise(mean.response = mean(response)) %>%
+    spread(type, mean.response) %>%
+    transform(score = (withheld - cross)/4) %>%
+    select(-withheld,-cross)
+  
+  # compute similarity score for each subject
+  subj.sim <- raw.sim %>%
+    filter(type %in% c("within","cross")) %>%
+    group_by(anon.id, coherence, exposures, type) %>%
+    summarise(mean.response = mean(response)) %>%
+    spread(type, mean.response) %>%
+    transform(score = (within - cross)/4) %>%
+    select(-within,-cross)
+  
+  # compute meaning score for each subject
+  subj.mng <- raw.mng %>%
+    group_by(anon.id, coherence, exposures) %>%
+    summarise(score = (sum(match) - 3)/3)
+  
+  subj.scores <- rbind(cbind(subj.mem, measure = "Memory"),
+                       cbind(subj.sim, measure = "Similarity"),
+                       cbind(subj.mng, measure = "Referent assignment"))
+  
+  levels(subj.scores$coherence) <- c("3/3\n(Expt 1)", "Onset\n(Expt 2)", "Rime\n(Expt 2)", "Syllable count\n(Expt 2)", "Semantic\nbaseline\n(Expt 3)")
+  
+  ## compute a score for each condition
+  
+  cond.scores <- subj.scores %>%
+    group_by(measure, coherence, exposures) %>%
+    summarise(mean.score = mean(score, na.rm = TRUE),
+              ci.l = ci.l(score),
+              ci.u = ci.u(score))
+  
+  # deterministic jitter for different coherence levels
+  cond.scores$x.offset <- with(cond.scores, c(20, 10, 0, -10, -20)[ as.numeric(coherence) ])
+  
+  # larger and more uniform point sizes
+  cond.scores$point.size <- with(cond.scores, ifelse(coherence %in% c("3/3\n(Expt 1)","Semantic\nbaseline\n(Expt 3)"), "small", "big"))
+  
+  colors <- c('gray60','steelblue2','khaki3','firebrick1','black')
+  
+  ggplot(data = cond.scores) +
+    facet_grid(. ~ measure) +
+    coord_cartesian(ylim = c(-0.3, 0.8)) +
+    geom_errorbar(aes(x = exposures + x.offset, ymin = ci.l, ymax = ci.u, color=coherence), width = 0, size = 0.2) +
+    stat_smooth(data = subj.scores, method="lm",se=FALSE, mapping = aes(x = exposures, y= score, color = coherence),size=0.5,linetype=2) +
+    geom_point(aes(x = exposures + x.offset, y = mean.score, color = coherence, fill = coherence, shape = coherence, size = point.size)) +
+    ylab("Score\n") +
+    scale_size_manual(values = c("big" = 4, "small" = 2.5), guide = FALSE) +
+    scale_shape_manual(name = 'Coherence', values = c(16,97,122,35,1)) +
+    scale_color_manual(name = 'Coherence', values = colors) +
+    scale_fill_manual(name = 'Coherence', values = colors) + 
+    scale_x_continuous(name = "Exposures", limits = c(56 - 30, 392 + 30), breaks = c(56, 126, 196, 392)) +
+    theme(legend.title = element_text(size = 8),
+          legend.text = element_text(size = 8))
+  
+})()
+```
+
+# Figure A1
+
+```{r}
+(function() {
+
+  subjects <- filter(subjects, experiment %in% c("1a","1b","old.vs.new")) %>%
+    transform(stim = ifelse(experiment == "old.vs.new", "New stimuli", "Old stimuli"))
+  
+  raw.mem <- droplevels(merge(memory, subjects))
+  raw.sim <- droplevels(merge(similarity, subjects))
+  raw.mng <- droplevels(merge(meaning, subjects))
+  
+  # put the conditions in the order i want them displayed in the legend (top to bottom)
+  coherence.order <- c("3/3", "2/3", "1/3", "0/3")
+  
+  raw.mem$coherence <- relevel.factor(raw.mem$coherence, coherence.order)
+  raw.sim$coherence <- relevel.factor(raw.sim$coherence, coherence.order)
+  raw.mng$coherence <- relevel.factor(raw.mng$coherence, coherence.order)
+
+  ## compute subject scores for each measure
+  ## each subject score is normalized such that it has a minimum of -1
+  ## and a maximum of +1
+ 
+  subj.mem <- ddply(raw.mem, .(anon.id, coherence, exposures, stim), function(subject.data) {
+    withheld <- filter(subject.data, type == "withheld")$response
+    cross <- filter(subject.data, type == "cross")$response
+    score <- mean(withheld) - mean(cross)
+    c("score" = score / 4)
+  })
+
+  subj.sim <- ddply(raw.sim, .(anon.id, coherence, exposures, stim), function(subject.data) {
+    within <- filter(subject.data, type == "within")$response
+    cross <- filter(subject.data, type == "cross")$response
+    score <- mean(within) - mean(cross)
+    c("score" = score / 4)
+  })
+
+  subj.mng <- ddply(raw.mng, .(anon.id, coherence, exposures, stim), function(subject.data) {
+    c("score" = (sum(subject.data$match) - 3)/3)
+  })
+
+  subj.scores <- rbind(cbind(subj.mem, measure = "Memory"),
+                       cbind(subj.sim, measure = "Similarity"),
+                       cbind(subj.mng, measure = "Referent\nassignment"))
+
+  subj.scores$Coherence <- subj.scores$coherence
+  levels(subj.scores$Coherence) <- c("3/3", "2/3", "1/3", "0/3")
+
+  ## compute a score for each coherence
+  ## mean_cl_boot gives us the mean and bootstrapped 95% CI between subjects
+
+  stats <- subj.scores %>%
+    group_by(exposures, Coherence, measure, stim) %>%
+    summarise(mean.score = mean(score, na.rm = TRUE),
+              ci.l = ci.l(score),
+              ci.u = ci.u(score))
+
+  ## HT http://stackoverflow.com/questions/9505270/r-ggplot2-smooth-on-entire-dataset-while-enforcing-a-ylim-cap
+  ## for the coord_cartesian bit
+  ggplot(data = stats) +
+    facet_grid(measure ~ stim) +
+    coord_cartesian(ylim = c(-0.2, 1)) +
+    geom_point(aes(x = exposures, y = mean.score, color = Coherence), size = 2.5) +
+    geom_errorbar(aes(x = exposures, ymin = ci.l, ymax = ci.u, color=Coherence), width = 10, size = 0.1) +
+    ylab("Score") +
+    stat_smooth(data = subj.scores, method="lm",se=FALSE, mapping = aes(x=exposures,y=score,colour=Coherence),size=0.5,linetype=2) +
+    scale_x_continuous(name = "Exposures", limits = c(56 - 10, 392 + 10), breaks = c(56, 126, 196, 392)) +
+    scale_color_manual(values = c('black','steelblue2','khaki3','firebrick1')) +
+    theme_pub(16)
+
+})()
+```
+
+
+```{r}
+rowvector.to.latex <<- function(row) {
+  paste(row, collapse = ' & ')
+}
+matrix.to.latex <<- function(m) {
+  ## convert matrix of strings to tabular environment
+  paste(
+    apply(m, 1, rowvector.to.latex),
+    collapse = '\\\\\n')
+}
+```
+
+# Table 2
+
+```{r}
+(function() {
+
+  # NB: here, put the conditions in the order
+  # i want them for helmert contrasts
+  conditions <- c("none", "sem1", "sem2", "sem3")
+  
+  subjects <- filter(subjects, experiment %in% c("1a"))
+  
+  raw.mem <- droplevels(merge(memory, subjects))
+  raw.sim <- droplevels(merge(similarity, subjects))
+  raw.mng <- droplevels(merge(meaning, subjects))
+
+  ## compute subject scores for each measure
+  ## each subject score is normalized such that it has a minimum of -1
+  ## and a maximum of +1
+
+  subj1.mem <- ddply(raw.mem, .(anon.id, coherence, exposures), function(subj) {
+    withheld <- filter(subj, type == "withheld")$response
+    cross <- filter(subj, type == "cross")$response
+    score <- mean(withheld) - mean(cross)
+    c("score" = score / 4)
+  })
+
+  subj1.sim <- ddply(raw.sim, .(anon.id, coherence, exposures), function(subj) {
+    within <- filter(subj, type == "within")$response
+    cross <- filter(subj, type == "cross")$response
+    score <- mean(within) - mean(cross)
+    c("score" = score / 4)
+  })
+
+  subj1.mng <- ddply(raw.mng, .(anon.id, coherence, exposures), function(subj) {
+    c("score" = (sum(subj$match) - 3)/3)
+  })
+
+  contrasts(subj1.mem$coherence) <- contr.helmert
+  contrasts(subj1.sim$coherence) <- contr.helmert
+  contrasts(subj1.mng$coherence) <- contr.helmert
+
+  predictor.names = c("Intercept",
+      "Condition: 1/3 - (0/3)",
+      "Condition: 2/3 - (0/3,1/3)",
+      "Condition: 3/3 - (0/3,1/3,2/3)",
+      "Exposures",
+      "E x C: 1/3 - (0/3)",
+      "E x C: 2/3 - (0/3,1/3)",
+      "E x C: 3/3 - (0/3,1/3,2/3)")
+
+  subj1.mem$exposures = subj1.mem$exposures / 1000
+  subj1.sim$exposures = subj1.sim$exposures / 1000
+  subj1.mng$exposures = subj1.mng$exposures / 1000
+
+  lm.mem <- lm(score ~ coherence * exposures, data = subj1.mem)
+  names(lm.mem$coefficients) <- predictor.names
+  
+  lm.sim <- lm(score ~ coherence * exposures, data = subj1.sim)
+  names(lm.sim$coefficients) <- predictor.names
+  
+  lm.mng <- lm(score ~ coherence * exposures, data = subj1.mng)
+  names(lm.mng$coefficients) <- predictor.names
+  
+  print(summary(lm.mem))
+  print(summary(lm.sim))
+  print(summary(lm.mng))
+  
+})()
+```
+
+# Table 3
+
+```{r}
+(function() {
+  
+  subjects <- filter(subjects, experiment %in% c("1b"))
+  
+  raw.mem <- droplevels(merge(memory, subjects))
+  raw.sim <- droplevels(merge(similarity, subjects))
+  raw.mng <- droplevels(merge(meaning, subjects))
+
+  ## compute subject scores for each measure
+  ## each subject score is normalized such that it has a minimum of -1
+  ## and a maximum of +1
+
+  subj1.mem <- ddply(raw.mem, .(anon.id, coherence, exposures), function(subj) {
+    withheld <- filter(subj, type == "withheld")$response
+    cross <- filter(subj, type == "cross")$response
+    score <- mean(withheld) - mean(cross)
+    c("score" = score / 4)
+  })
+
+  subj1.sim <- ddply(raw.sim, .(anon.id, coherence, exposures), function(subj) {
+    within <- filter(subj, type == "within")$response
+    cross <- filter(subj, type == "cross")$response
+    score <- mean(within) - mean(cross)
+    c("score" = score / 4)
+  })
+
+  subj1.mng <- ddply(raw.mng, .(anon.id, coherence, exposures), function(subj) {
+    c("score" = (sum(subj$match) - 3)/3)
+  })
+
+  # subtract 56 for interpretability of intercept
+  # divide by 1000 for readability
+  subj1.mem$exposures = (subj1.mem$exposures - 56) / 1000
+  subj1.sim$exposures = (subj1.sim$exposures - 56) / 1000
+  subj1.mng$exposures = (subj1.mng$exposures - 56) / 1000
+
+  lm.mem <- lm(score ~ exposures, data = subj1.mem)
+  
+  lm.sim <- lm(score ~ exposures, data = subj1.sim)
+  
+  lm.mng <- lm(score ~ exposures, data = subj1.mng)
+  
+  print(summary(lm.mem))
+  print(summary(lm.sim))
+  print(summary(lm.mng))
+  
+})()
+```
+
+# Table 4
+
+```{r}
+(function() {
+  
+
+  
+  subjects <- filter(subjects, experiment %in% c("2","3") | experiment %in% c("1a") & coherence %in% c("0/3"))
+  
+  raw.mem <- droplevels(merge(memory, subjects))
+  raw.sim <- droplevels(merge(similarity, subjects))
+  raw.mng <- droplevels(merge(meaning, subjects))
+  
+  coherence.order <- c("0/3","onset","rime","syllables","semantic.baseline")
+  
+  raw.mem$coherence <- relevel.factor(raw.mem$coherence, coherence.order)
+  raw.sim$coherence <- relevel.factor(raw.sim$coherence, coherence.order)
+  raw.mng$coherence <- relevel.factor(raw.mng$coherence, coherence.order)
+
+  ## compute subject scores for each measure
+  ## each subject score is normalized such that it has a minimum of -1
+  ## and a maximum of +1
+
+  subj1.mem <- ddply(raw.mem, .(anon.id, coherence, exposures), function(subj) {
+    withheld <- filter(subj, type == "withheld")$response
+    cross <- filter(subj, type == "cross")$response
+    score <- mean(withheld) - mean(cross)
+    c("score" = score / 4)
+  })
+
+  subj1.sim <- ddply(raw.sim, .(anon.id, coherence, exposures), function(subj) {
+    within <- filter(subj, type == "within")$response
+    cross <- filter(subj, type == "cross")$response
+    score <- mean(within) - mean(cross)
+    c("score" = score / 4)
+  })
+
+  subj1.mng <- ddply(raw.mng, .(anon.id, coherence, exposures), function(subj) {
+    c("score" = (sum(subj$match) - 3)/3)
+  })
+  
+  predictor.names = c("Intercept",
+    "Condition: Onset - 0/3",
+    "Condition: Rime - 0/3",
+    "Condition: Syllable count - 0/3",
+    "Condition: Semantic baseline - 0/3",
+    "Exposures",
+    "E x C: Onset - 0/3",
+    "E x C: Rime - 0/3",
+    "E x C: Syllable count - 0/3",
+    "E x C: Semantic baseline - 0/3")
+
+  subj1.mem$exposures = subj1.mem$exposures / 1000
+  subj1.sim$exposures = subj1.sim$exposures / 1000
+  subj1.mng$exposures = subj1.mng$exposures / 1000
+
+  lm.mem <- lm(score ~ coherence * exposures, data = subj1.mem)
+  names(lm.mem$coefficients) <- predictor.names
+  
+  lm.sim <- lm(score ~ coherence * exposures, data = subj1.sim)
+  names(lm.sim$coefficients) <- predictor.names
+  
+  lm.mng <- lm(score ~ coherence * exposures, data = subj1.mng)
+  names(lm.mng$coefficients) <- predictor.names
+  
+  print(summary(lm.mem))
+  print(summary(lm.sim))
+  print(summary(lm.mng))
+  
+})()
+```
+
+# Table B1
+
+```{r}
+(function() {
+  
+  format.pval <- function(p) {
+    ifelse(is.na(p), " ",
+           ifelse(p < 0.001,"\\*\\*\\*",
+                         ifelse(p < 0.01, "\\*\\*",
+                                ifelse(p < 0.05,"\\*",
+                                       round3(p)))))
+  }
+
+  subjects <- subjects %>% filter(experiment %in% c("1a","1b","2","3"))
+  
+  memory = memory %>%
+    filter(type != 'catch') %>%
+    merge(subjects) %>%
+    droplevels()
+
+  
+  stats = memory %>%
+    group_by(anon.id, coherence, exposures, type) %>%
+    summarise(mean.response = mean(response))
+
+  stats$type = relevel.factor(stats$type, c('familiar','withheld','cross','position'))
+
+  ddply(stats, .(coherence), function(e) {
+    cat(paste('# ', e[1,]$coherence, '\n'))
+
+    df = t.test(filter(e, type == 'familiar')$mean.response,
+                filter(e, type == 'withheld')$mean.response, paired = TRUE)$parameter
+
+    cat(paste('df =', df, '\n'))
+
+    x <- pairwise.t.test(e$mean.response, e$type, paired = TRUE)
+    p.values <- format.pval(x$p.value)
+    dimnames(p.values) <- list(c("W","C","P"),c("F","W","C"))
+    
+    pandoc.table(p.values, style = 'grid', emphasize.rownames = FALSE)
+    
+    ""
+  })
+  
+  ""
+
+})()
+
+```
+
