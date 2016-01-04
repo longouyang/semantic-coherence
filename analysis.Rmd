@@ -83,7 +83,7 @@ theme_pub <<- function(base_size = 24) {
 theme_set(theme_pub(16))
 ```
 
-## Read data
+# Read data
 
 drop subjects who didn't pass all catch trials
 
@@ -106,11 +106,48 @@ meaning <- read.csv("meaning.csv") %>%
   select(-passed.catch.trials)
 ```
 
-# Figure 3
+## compute memory, similarity, and referent assignment scores per subject
 
 ```{r}
 (function() {
 
+  mem.scores <- memory %>%
+    merge(subjects) %>%
+    filter(type %in% c("withheld","cross")) %>%
+    group_by(anon.id, coherence, exposures, type) %>%
+    summarise(mean.response = mean(response)) %>%
+    spread(type, mean.response) %>%
+    transform(mem = (withheld - cross)/4) %>%
+    select(-withheld,-cross)
+  
+  subjects <<- merge(subjects, mem.scores %>% select(anon.id, mem))
+  
+  sim.scores <- similarity %>%
+    merge(subjects) %>%
+    filter(type %in% c("within","cross")) %>%
+    group_by(anon.id, coherence, exposures, type) %>%
+    summarise(mean.response = mean(response)) %>%
+    spread(type, mean.response) %>%
+    transform(sim = (within - cross)/4) %>%
+    select(-within,-cross)
+  
+  subjects <<- merge(subjects, sim.scores %>% select(anon.id, sim))
+  
+  mng.scores <- meaning %>%
+    merge(subjects) %>%
+    group_by(anon.id, coherence, exposures) %>%
+    summarise(mng = (sum(match) - 3)/3)
+  
+  subjects <<- merge(subjects, mng.scores %>% select(anon.id, mng))
+  
+})()
+```
+
+
+# Figure 3
+
+```{r}
+(function() {
   coherence.levels = c('0/3','1/3','2/3', 'nonce.connective', '3/3')
   
   subjects <- filter(subjects, experiment %in% c("1a", "1b"))
@@ -179,8 +216,8 @@ meaning <- read.csv("meaning.csv") %>%
   raw.mem$coherence <- relevel.factor(raw.mem$coherence, coherence.order)
   raw.sim$coherence <- relevel.factor(raw.sim$coherence, coherence.order)
   raw.mng$coherence <- relevel.factor(raw.mng$coherence, coherence.order)
-
-  # compute memory score for each subject
+  
+    # compute memory score for each subject
   subj.mem <- raw.mem %>%
     filter(type %in% c("withheld","cross")) %>%
     group_by(anon.id, coherence, exposures, type) %>%
@@ -202,7 +239,7 @@ meaning <- read.csv("meaning.csv") %>%
   subj.mng <- raw.mng %>%
     group_by(anon.id, coherence, exposures) %>%
     summarise(score = (sum(match) - 3)/3)
-  
+
   subj.scores <- rbind(cbind(subj.mem, measure = "Memory"),
                        cbind(subj.sim, measure = "Similarity"),
                        cbind(subj.mng, measure = "Referent assignment"))
@@ -237,6 +274,50 @@ meaning <- read.csv("meaning.csv") %>%
   
 })()
 ```
+
+```{r}
+(function() {
+  
+  subjects <- subjects %>%
+    filter(experiment %in% c("1a","1b")) %>%
+    droplevels() %>%
+    gather(measure, score, mem, sim, mng) %>%
+    mutate(coherence = factor(coherence,
+                              levels =  c("nonce.connective", "3/3", "2/3", "1/3", "0/3"),
+                              labels = c("NC 3/3", "3/3", "2/3", "1/3", "0/3")),
+           measure = factor(measure,
+                            levels = c("mem", "sim", "mng"),
+                            labels = c("Memory", "Similarity", "Referent assignment")))
+  
+  # compute a score for each measure and condition (= coherence x exposure)
+  cond.scores <- subjects %>%
+    group_by(measure, coherence, exposures) %>%
+    summarise(mean.score = mean(score, na.rm = TRUE),
+              ci.l = ci.l(score),
+              ci.u = ci.u(score))
+  
+  # deterministic jitter for different coherence levels
+  cond.scores$x.offset <- with(cond.scores, c(20, 10, 0, -10, -20)[ as.numeric(coherence) ])
+  
+  colors <- c('steelblue2','black','khaki3','firebrick1', 'gray')
+  
+  ggplot(data = cond.scores) +
+    facet_grid(. ~ measure) +
+    coord_cartesian(ylim = c(-0.3, 0.8)) + # HT http://stackoverflow.com/a/16686534/351392
+    geom_errorbar(aes(x = exposures + x.offset, ymin = ci.l, ymax = ci.u, color=coherence), width = 0, size = 0.2) +
+    stat_smooth(data = subjects, method="lm",se=FALSE, mapping = aes(x = exposures, y= score, color = coherence),size=0.5,linetype=2) +
+    geom_point(aes(x = exposures + x.offset, y = mean.score, color = coherence, fill = coherence, shape = coherence), size = 2.5) +
+    ylab("Score\n") +
+    scale_shape_manual(name = 'Coherence', values = c(8, 16, 15, 17, 23)) +
+    scale_color_manual(name = 'Coherence', values = colors) +
+    scale_fill_manual(name = 'Coherence', values = colors) + 
+    scale_x_continuous(name = "Exposures", limits = c(56 - 30, 392 + 30), breaks = c(56, 126, 196, 392)) +
+    theme(legend.title = element_text(size = 8),
+          legend.text = element_text(size = 8))
+  
+})()
+```
+
 
 # Figure 5
 
@@ -300,52 +381,21 @@ meaning <- read.csv("meaning.csv") %>%
 ```{r}
 (function() {
   
-  coherence.order <- c("3/3","onset","rime","syllables", "semantic.baseline")
+  conditions <- c("3/3","onset","rime","syllables", "semantic.baseline")
   
-  subjects <- filter(subjects, experiment %in% c("1a","2","3"), coherence %in% coherence.order)
+  subjects <- subjects %>%
+    filter(experiment %in% c("1a","2","3"), coherence %in% conditions) %>%
+    droplevels() %>%
+    gather(measure, score, mem, sim, mng) %>%
+    mutate(coherence = factor(coherence,
+                              levels = conditions,
+                              labels =  c("3/3\n(Expt 1)", "Onset\n(Expt 2)", "Rime\n(Expt 2)", "Syllable count\n(Expt 2)", "Semantic\nbaseline\n(Expt 3)")),
+           measure = factor(measure,
+                            levels = c("mem", "sim", "mng"),
+                            labels = c("Memory", "Similarity", "Referent assignment")))
   
-  raw.mem <- droplevels(merge(memory, subjects))
-  raw.sim <- droplevels(merge(similarity, subjects))
-  raw.mng <- droplevels(merge(meaning, subjects))
-  
-  # put the conditions in the order i want them displayed in the legend (top to bottom)
-  
-  raw.mem$coherence <- relevel.factor(raw.mem$coherence, coherence.order)
-  raw.sim$coherence <- relevel.factor(raw.sim$coherence, coherence.order)
-  raw.mng$coherence <- relevel.factor(raw.mng$coherence, coherence.order)
-  
-  # compute memory score for each subject
-  subj.mem <- raw.mem %>%
-    filter(type %in% c("withheld","cross")) %>%
-    group_by(anon.id, coherence, exposures, type) %>%
-    summarise(mean.response = mean(response)) %>%
-    spread(type, mean.response) %>%
-    transform(score = (withheld - cross)/4) %>%
-    select(-withheld,-cross)
-  
-  # compute similarity score for each subject
-  subj.sim <- raw.sim %>%
-    filter(type %in% c("within","cross")) %>%
-    group_by(anon.id, coherence, exposures, type) %>%
-    summarise(mean.response = mean(response)) %>%
-    spread(type, mean.response) %>%
-    transform(score = (within - cross)/4) %>%
-    select(-within,-cross)
-  
-  # compute meaning score for each subject
-  subj.mng <- raw.mng %>%
-    group_by(anon.id, coherence, exposures) %>%
-    summarise(score = (sum(match) - 3)/3)
-  
-  subj.scores <- rbind(cbind(subj.mem, measure = "Memory"),
-                       cbind(subj.sim, measure = "Similarity"),
-                       cbind(subj.mng, measure = "Referent assignment"))
-  
-  levels(subj.scores$coherence) <- c("3/3\n(Expt 1)", "Onset\n(Expt 2)", "Rime\n(Expt 2)", "Syllable count\n(Expt 2)", "Semantic\nbaseline\n(Expt 3)")
-  
-  ## compute a score for each condition
-  
-  cond.scores <- subj.scores %>%
+  # compute a score for each measure and condition (= coherence x exposure)
+  cond.scores <- subjects %>%
     group_by(measure, coherence, exposures) %>%
     summarise(mean.score = mean(score, na.rm = TRUE),
               ci.l = ci.l(score),
@@ -361,9 +411,9 @@ meaning <- read.csv("meaning.csv") %>%
   
   ggplot(data = cond.scores) +
     facet_grid(. ~ measure) +
-    coord_cartesian(ylim = c(-0.3, 0.8)) +
+    coord_cartesian(ylim = c(-0.3, 0.8)) + # HT http://stackoverflow.com/a/16686534/351392
     geom_errorbar(aes(x = exposures + x.offset, ymin = ci.l, ymax = ci.u, color=coherence), width = 0, size = 0.2) +
-    stat_smooth(data = subj.scores, method="lm",se=FALSE, mapping = aes(x = exposures, y= score, color = coherence),size=0.5,linetype=2) +
+    stat_smooth(data = subjects, method="lm",se=FALSE, mapping = aes(x = exposures, y= score, color = coherence),size=0.5,linetype=2) +
     geom_point(aes(x = exposures + x.offset, y = mean.score, color = coherence, fill = coherence, shape = coherence, size = point.size)) +
     ylab("Score\n") +
     scale_size_manual(values = c("big" = 4, "small" = 2.5), guide = FALSE) +
@@ -376,6 +426,7 @@ meaning <- read.csv("meaning.csv") %>%
   
 })()
 ```
+
 
 # Figure A1
 
