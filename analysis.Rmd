@@ -85,7 +85,7 @@ theme_set(theme_pub(16))
 
 # Read data
 
-drop subjects who didn't pass all catch trials
+## get raw data
 
 ```{r}
 subjects <- read.csv("subjects.csv") %>% filter(passed.catch.trials)
@@ -142,7 +142,6 @@ meaning <- read.csv("meaning.csv") %>%
   
 })()
 ```
-
 
 # Figure 3
 
@@ -353,7 +352,6 @@ meaning <- read.csv("meaning.csv") %>%
 })()
 ```
 
-
 # Figure A1
 
 ```{r}
@@ -427,18 +425,6 @@ meaning <- read.csv("meaning.csv") %>%
 })()
 ```
 
-
-```{r}
-rowvector.to.latex <<- function(row) {
-  paste(row, collapse = ' & ')
-}
-matrix.to.latex <<- function(m) {
-  ## convert matrix of strings to tabular environment
-  paste(
-    apply(m, 1, rowvector.to.latex),
-    collapse = '\\\\\n')
-}
-```
 
 # Table 2
 
