@@ -36,14 +36,6 @@ relevel.factor <- function(F, L, ordered = FALSE) {
   factor(F, levels = L0[match(L, L0)], ordered = ordered)
 }
 
-to.data.frame <- function(x) {
-  do.call(data.frame, as.list(x))
-}
-
-pluck <- function(lst, prop) {
-  Map(function(x) { x[prop] }, lst)
-}
-
 generic.ci_ <- function(x, n = 5000){
   structure(
     quantile(
@@ -63,58 +55,9 @@ ci.u <- function(x) {
   generic.ci(x)["ci.u"]
 }
 
-round0 <<- function(x) {
-  round(x, digits = 0)
-}
-
-round1 <<- function(x) {
-  round(x, digits = 1)
-}
-
-round2 <<- function(x) {
-  round(x, digits = 2)
-}
-
-round3 <<- function(x) {
-  round(x, digits = 3)
-}
-
-round4 <<- function(x) {
-  round(x, digits = 4)
-}
-
-round5 <<- function(x) {
-  round(x, digits = 5)
-}
-
-get_stars <- function(p) {
-  if (p < 0.001) return("***")
-  if (p < 0.01) return("**")
-  if (p < 0.05) return("*")
-  if (p < 0.1) return(".")
-  return("")
-}
-
-
-
-cohen.d <<- function(x,y) {
-  sX <- sd(x)
-  nX <- length(x)
-  sY <- sd(y)
-  nY <- length(y)
-  sPool <- sqrt( ((nX - 1) * sX^2 + (nY - 1) * sY^2 )/(nX+nY))
-  (mean(x) - mean(y))/sPool
-}
-
 scoop <- function(df, seed = 0, n = 5) {
   set.seed(seed)
   df[sample(nrow(df), n), ]
-}
-
-ForEach <- function(f, xs) {
-  for(x in xs) {
-    f(x)
-  }
 }
 ```
 
@@ -724,7 +667,7 @@ matrix.to.latex <<- function(m) {
            ifelse(p < 0.001,"\\*\\*\\*",
                          ifelse(p < 0.01, "\\*\\*",
                                 ifelse(p < 0.05,"\\*",
-                                       round3(p)))))
+                                       round(p,3)))))
   }
 
   subjects <- subjects %>% filter(experiment %in% c("1a","1b","2","3"))
