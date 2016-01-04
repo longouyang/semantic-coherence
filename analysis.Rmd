@@ -5,8 +5,7 @@ output: html_document
 
 # todo
 
-- move score computation into prelude
-- change coherence back to condition, as this is what i use in the paper
+- change "coherence"" back to "condition"", as this is what i use in the paper?
 
 # Prelude
 
@@ -395,41 +394,15 @@ meaning <- read.csv("meaning.csv") %>%
 ```{r}
 (function() {
 
-  # NB: here, put the conditions in the order
-  # i want them for helmert contrasts
-  conditions <- c("none", "sem1", "sem2", "sem3")
+  # conditions in the order we want for helmert contrasts
+  coherence.order <- c("0/3", "1/3", "2/3", "3/3")
   
-  subjects <- filter(subjects, experiment %in% c("1a"))
-  
-  raw.mem <- droplevels(merge(memory, subjects))
-  raw.sim <- droplevels(merge(similarity, subjects))
-  raw.mng <- droplevels(merge(meaning, subjects))
+  subjects <- filter(subjects, experiment %in% c("1a")) %>%
+    droplevels() %>%
+    transform(exposures = exposures / 1000,
+              coherence = factor(coherence, levels = coherence.order))
 
-  ## compute subject scores for each measure
-  ## each subject score is normalized such that it has a minimum of -1
-  ## and a maximum of +1
-
-  subj1.mem <- ddply(raw.mem, .(anon.id, coherence, exposures), function(subj) {
-    withheld <- filter(subj, type == "withheld")$response
-    cross <- filter(subj, type == "cross")$response
-    score <- mean(withheld) - mean(cross)
-    c("score" = score / 4)
-  })
-
-  subj1.sim <- ddply(raw.sim, .(anon.id, coherence, exposures), function(subj) {
-    within <- filter(subj, type == "within")$response
-    cross <- filter(subj, type == "cross")$response
-    score <- mean(within) - mean(cross)
-    c("score" = score / 4)
-  })
-
-  subj1.mng <- ddply(raw.mng, .(anon.id, coherence, exposures), function(subj) {
-    c("score" = (sum(subj$match) - 3)/3)
-  })
-
-  contrasts(subj1.mem$coherence) <- contr.helmert
-  contrasts(subj1.sim$coherence) <- contr.helmert
-  contrasts(subj1.mng$coherence) <- contr.helmert
+  contrasts(subjects$coherence) <- contr.helmert
 
   predictor.names = c("Intercept",
       "Condition: 1/3 - (0/3)",
@@ -440,17 +413,13 @@ meaning <- read.csv("meaning.csv") %>%
       "E x C: 2/3 - (0/3,1/3)",
       "E x C: 3/3 - (0/3,1/3,2/3)")
 
-  subj1.mem$exposures = subj1.mem$exposures / 1000
-  subj1.sim$exposures = subj1.sim$exposures / 1000
-  subj1.mng$exposures = subj1.mng$exposures / 1000
-
-  lm.mem <- lm(score ~ coherence * exposures, data = subj1.mem)
+  lm.mem <- lm(mem ~ coherence * exposures, data = subjects)
   names(lm.mem$coefficients) <- predictor.names
   
-  lm.sim <- lm(score ~ coherence * exposures, data = subj1.sim)
+  lm.sim <- lm(sim ~ coherence * exposures, data = subjects)
   names(lm.sim$coefficients) <- predictor.names
   
-  lm.mng <- lm(score ~ coherence * exposures, data = subj1.mng)
+  lm.mng <- lm(mng ~ coherence * exposures, data = subjects)
   names(lm.mng$coefficients) <- predictor.names
   
   print(summary(lm.mem))
@@ -464,46 +433,13 @@ meaning <- read.csv("meaning.csv") %>%
 
 ```{r}
 (function() {
-  
-  subjects <- filter(subjects, experiment %in% c("1b"))
-  
-  raw.mem <- droplevels(merge(memory, subjects))
-  raw.sim <- droplevels(merge(similarity, subjects))
-  raw.mng <- droplevels(merge(meaning, subjects))
+  subjects <- filter(subjects, experiment %in% c("1b")) %>%
+    droplevels() %>%
+    transform(exposures = (exposures - 56) / 1000) # NB: also subtract 56 so intercept is interpretable
 
-  ## compute subject scores for each measure
-  ## each subject score is normalized such that it has a minimum of -1
-  ## and a maximum of +1
-
-  subj1.mem <- ddply(raw.mem, .(anon.id, coherence, exposures), function(subj) {
-    withheld <- filter(subj, type == "withheld")$response
-    cross <- filter(subj, type == "cross")$response
-    score <- mean(withheld) - mean(cross)
-    c("score" = score / 4)
-  })
-
-  subj1.sim <- ddply(raw.sim, .(anon.id, coherence, exposures), function(subj) {
-    within <- filter(subj, type == "within")$response
-    cross <- filter(subj, type == "cross")$response
-    score <- mean(within) - mean(cross)
-    c("score" = score / 4)
-  })
-
-  subj1.mng <- ddply(raw.mng, .(anon.id, coherence, exposures), function(subj) {
-    c("score" = (sum(subj$match) - 3)/3)
-  })
-
-  # subtract 56 for interpretability of intercept
-  # divide by 1000 for readability
-  subj1.mem$exposures = (subj1.mem$exposures - 56) / 1000
-  subj1.sim$exposures = (subj1.sim$exposures - 56) / 1000
-  subj1.mng$exposures = (subj1.mng$exposures - 56) / 1000
-
-  lm.mem <- lm(score ~ exposures, data = subj1.mem)
-  
-  lm.sim <- lm(score ~ exposures, data = subj1.sim)
-  
-  lm.mng <- lm(score ~ exposures, data = subj1.mng)
+  lm.mem <- lm(mem ~ exposures, data = subjects)
+  lm.sim <- lm(sim ~ exposures, data = subjects)
+  lm.mng <- lm(mng ~ exposures, data = subjects)
   
   print(summary(lm.mem))
   print(summary(lm.sim))
@@ -516,42 +452,12 @@ meaning <- read.csv("meaning.csv") %>%
 
 ```{r}
 (function() {
-  
 
-  
-  subjects <- filter(subjects, experiment %in% c("2","3") | experiment %in% c("1a") & coherence %in% c("0/3"))
-  
-  raw.mem <- droplevels(merge(memory, subjects))
-  raw.sim <- droplevels(merge(similarity, subjects))
-  raw.mng <- droplevels(merge(meaning, subjects))
-  
-  coherence.order <- c("0/3","onset","rime","syllables","semantic.baseline")
-  
-  raw.mem$coherence <- relevel.factor(raw.mem$coherence, coherence.order)
-  raw.sim$coherence <- relevel.factor(raw.sim$coherence, coherence.order)
-  raw.mng$coherence <- relevel.factor(raw.mng$coherence, coherence.order)
-
-  ## compute subject scores for each measure
-  ## each subject score is normalized such that it has a minimum of -1
-  ## and a maximum of +1
-
-  subj1.mem <- ddply(raw.mem, .(anon.id, coherence, exposures), function(subj) {
-    withheld <- filter(subj, type == "withheld")$response
-    cross <- filter(subj, type == "cross")$response
-    score <- mean(withheld) - mean(cross)
-    c("score" = score / 4)
-  })
-
-  subj1.sim <- ddply(raw.sim, .(anon.id, coherence, exposures), function(subj) {
-    within <- filter(subj, type == "within")$response
-    cross <- filter(subj, type == "cross")$response
-    score <- mean(within) - mean(cross)
-    c("score" = score / 4)
-  })
-
-  subj1.mng <- ddply(raw.mng, .(anon.id, coherence, exposures), function(subj) {
-    c("score" = (sum(subj$match) - 3)/3)
-  })
+  subjects <- subjects %>%
+    filter(experiment %in% c("2","3") | experiment %in% c("1a") & coherence %in% c("0/3")) %>%
+    droplevels() %>%
+    transform(coherence = factor(coherence, levels = c("0/3","onset","rime","syllables","semantic.baseline")),
+              exposures = exposures / 1000)
   
   predictor.names = c("Intercept",
     "Condition: Onset - 0/3",
@@ -564,17 +470,13 @@ meaning <- read.csv("meaning.csv") %>%
     "E x C: Syllable count - 0/3",
     "E x C: Semantic baseline - 0/3")
 
-  subj1.mem$exposures = subj1.mem$exposures / 1000
-  subj1.sim$exposures = subj1.sim$exposures / 1000
-  subj1.mng$exposures = subj1.mng$exposures / 1000
-
-  lm.mem <- lm(score ~ coherence * exposures, data = subj1.mem)
+  lm.mem <- lm(mem ~ coherence * exposures, data = subjects)
   names(lm.mem$coefficients) <- predictor.names
   
-  lm.sim <- lm(score ~ coherence * exposures, data = subj1.sim)
+  lm.sim <- lm(sim ~ coherence * exposures, data = subjects)
   names(lm.sim$coefficients) <- predictor.names
   
-  lm.mng <- lm(score ~ coherence * exposures, data = subj1.mng)
+  lm.mng <- lm(mng ~ coherence * exposures, data = subjects)
   names(lm.mng$coefficients) <- predictor.names
   
   print(summary(lm.mem))
@@ -590,10 +492,11 @@ meaning <- read.csv("meaning.csv") %>%
 (function() {
   
   format.pval <- function(p) {
+    # note to self: prefix every * with \\ for latex output
     ifelse(is.na(p), " ",
-           ifelse(p < 0.001,"\\*\\*\\*",
-                         ifelse(p < 0.01, "\\*\\*",
-                                ifelse(p < 0.05,"\\*",
+           ifelse(p < 0.001,"***",
+                         ifelse(p < 0.01, "**",
+                                ifelse(p < 0.05,"*",
                                        round(p,3)))))
   }
 
