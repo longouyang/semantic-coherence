@@ -356,70 +356,34 @@ meaning <- read.csv("meaning.csv") %>%
 
 ```{r}
 (function() {
-
-  subjects <- filter(subjects, experiment %in% c("1a","1b","old.vs.new")) %>%
-    transform(stim = ifelse(experiment == "old.vs.new", "New stimuli", "Old stimuli"))
   
-  raw.mem <- droplevels(merge(memory, subjects))
-  raw.sim <- droplevels(merge(similarity, subjects))
-  raw.mng <- droplevels(merge(meaning, subjects))
-  
-  # put the conditions in the order i want them displayed in the legend (top to bottom)
-  coherence.order <- c("3/3", "2/3", "1/3", "0/3")
-  
-  raw.mem$coherence <- relevel.factor(raw.mem$coherence, coherence.order)
-  raw.sim$coherence <- relevel.factor(raw.sim$coherence, coherence.order)
-  raw.mng$coherence <- relevel.factor(raw.mng$coherence, coherence.order)
+  coherence.order <- c("3/3","2/3","1/3","0/3")
 
-  ## compute subject scores for each measure
-  ## each subject score is normalized such that it has a minimum of -1
-  ## and a maximum of +1
- 
-  subj.mem <- ddply(raw.mem, .(anon.id, coherence, exposures, stim), function(subject.data) {
-    withheld <- filter(subject.data, type == "withheld")$response
-    cross <- filter(subject.data, type == "cross")$response
-    score <- mean(withheld) - mean(cross)
-    c("score" = score / 4)
-  })
+  subject.scores <- subjects %>%
+    filter(experiment %in% c("1a","1b","old.vs.new"), coherence %in% coherence.order) %>%
+    droplevels() %>%
+    gather(measure, score, mem, sim, mng) %>%
+    transform(stim = ifelse(experiment == "old.vs.new", "New stimuli", "Old stimuli"),
+              coherence = factor(coherence, levels = coherence.order),
+              measure = factor(measure, levels = c("mem","sim","mng"), labels = c("Memory","Similarity","Referent\nassignment")))
 
-  subj.sim <- ddply(raw.sim, .(anon.id, coherence, exposures, stim), function(subject.data) {
-    within <- filter(subject.data, type == "within")$response
-    cross <- filter(subject.data, type == "cross")$response
-    score <- mean(within) - mean(cross)
-    c("score" = score / 4)
-  })
-
-  subj.mng <- ddply(raw.mng, .(anon.id, coherence, exposures, stim), function(subject.data) {
-    c("score" = (sum(subject.data$match) - 3)/3)
-  })
-
-  subj.scores <- rbind(cbind(subj.mem, measure = "Memory"),
-                       cbind(subj.sim, measure = "Similarity"),
-                       cbind(subj.mng, measure = "Referent\nassignment"))
-
-  subj.scores$Coherence <- subj.scores$coherence
-  levels(subj.scores$Coherence) <- c("3/3", "2/3", "1/3", "0/3")
-
-  ## compute a score for each coherence
-  ## mean_cl_boot gives us the mean and bootstrapped 95% CI between subjects
-
-  stats <- subj.scores %>%
-    group_by(exposures, Coherence, measure, stim) %>%
+  cell.scores <- subject.scores %>%
+    group_by(exposures, coherence, measure, stim) %>%
     summarise(mean.score = mean(score, na.rm = TRUE),
               ci.l = ci.l(score),
               ci.u = ci.u(score))
 
   ## HT http://stackoverflow.com/questions/9505270/r-ggplot2-smooth-on-entire-dataset-while-enforcing-a-ylim-cap
   ## for the coord_cartesian bit
-  ggplot(data = stats) +
+  ggplot(data = cell.scores) +
     facet_grid(measure ~ stim) +
     coord_cartesian(ylim = c(-0.2, 1)) +
-    geom_point(aes(x = exposures, y = mean.score, color = Coherence), size = 2.5) +
-    geom_errorbar(aes(x = exposures, ymin = ci.l, ymax = ci.u, color=Coherence), width = 10, size = 0.1) +
+    geom_point(aes(x = exposures, y = mean.score, color = coherence), size = 2.5) +
+    geom_errorbar(aes(x = exposures, ymin = ci.l, ymax = ci.u, color= coherence), width = 10, size = 0.1) +
     ylab("Score") +
-    stat_smooth(data = subj.scores, method="lm",se=FALSE, mapping = aes(x=exposures,y=score,colour=Coherence),size=0.5,linetype=2) +
+    stat_smooth(data = subject.scores, method="lm",se=FALSE, mapping = aes(x=exposures,y=score,color= coherence),size=0.5,linetype=2) +
     scale_x_continuous(name = "Exposures", limits = c(56 - 10, 392 + 10), breaks = c(56, 126, 196, 392)) +
-    scale_color_manual(values = c('black','steelblue2','khaki3','firebrick1')) +
+    scale_color_manual(name = "Coherence", values = c('black','steelblue2','khaki3','firebrick1')) +
     theme_pub(16)
 
 })()
